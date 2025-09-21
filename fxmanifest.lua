@@ -5,9 +5,8 @@ game 'gta5'
 author 'Simple'
 description 'Statische ID Abfrage API'
 version '1.2.0'
-license 'MIT'
 
--- Client Scripts (leer gelassen für mögliche zukünftige Nutzung)
+-- Client Scripts
 client_scripts {
 }
 
@@ -24,7 +23,6 @@ server_scripts {
     'commands.lua'
 }
 
--- Exporte für Server & Shared Nutzung
 -- Core direct exports
 server_export 'GetClientStaticID'
 server_export 'GetClientDynamicID'
@@ -67,3 +65,4 @@ export 'SafeCheckDynamicIDOnline'
 export 'SafeGetIdentifierFromStaticID'
 export 'SafeGetStaticIDFromIdentifier'
 export 'SafeGetConflictStats'
+
