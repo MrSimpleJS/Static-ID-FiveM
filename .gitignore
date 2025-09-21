@@ -1,0 +1,13 @@
+# Lua / FiveM
+*.log
+*.bak
+*.tmp
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Dependencies cache (if any in future)
+node_modules/
