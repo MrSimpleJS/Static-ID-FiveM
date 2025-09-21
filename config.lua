@@ -51,7 +51,7 @@ Config.EnableCaching = true            -- disable only for debugging / fallback
 Config.InitialPlayerPreload = true     -- resolve static ID as soon as player loads
 Config.CacheRefreshInterval = 60       -- full identifier/static mapping refresh cadence
 Config.CachePruneInterval = 300        -- prune dynamic (online) mappings for disconnected players
-Config.Debug = false                   -- verbose internal logging
+Config.Debug = true                   -- verbose internal logging
 
 -- Locale: 'en' or 'de' (extendable via locales/*.lua)
 Config.Locale = 'en'
@@ -119,13 +119,11 @@ Config.DB = {
     -- from UsersTable into SeparateTable. Disable after initial adoption.
     MigrateUsersOnFirstRun = true
 }
-
-return Config
-
 --[[
- Auto-adjustment note (executed after return for readability; Lua still runs it):
+ Auto-adjustment note:
  If QBCore is selected and the default ESX table name is still present, switch to
  the conventional 'players' table. Warn if no numeric static ID column likely exists.
+ (Must run BEFORE the final return; Lua does not allow statements after a top-level return.)
 ]]
 if Config.Framework == 'qb' and not Config.DB.UseSeparateStaticTable then
     if Config.DB.UsersTable == 'users' then
@@ -136,3 +134,5 @@ if Config.Framework == 'qb' and not Config.DB.UseSeparateStaticTable then
         print('^3[StaticID] QBCore note: default players table usually has no numeric "id" column. Enable UseSeparateStaticTable=true OR add a numeric column and update Config.DB.StaticIDColumn.^0')
     end
 end
+
+return Config

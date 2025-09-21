@@ -126,6 +126,11 @@ local function runScalar(query, params)
     return res
 end
 
+-- Forward helper (must be declared before first use in validateSchema)
+local function usingSeparateTable()
+    return Config.DB.UseSeparateStaticTable == true
+end
+
 --[[ Schema Validation ]]--
 local function validateSchema()
     -- Basic presence checks; non-fatal but warn loudly.
@@ -179,9 +184,6 @@ local function validateSchema()
     end
 end
 -- Separate Table Mode Helpers
-local function usingSeparateTable()
-    return Config.DB.UseSeparateStaticTable == true
-end
 
 local function selectStaticByIdentifier(identifier)
     if usingSeparateTable() then

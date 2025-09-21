@@ -4,7 +4,8 @@ game 'gta5'
 
 author 'Simple'
 description 'Statische ID Abfrage API'
-version '1.2.0'
+version '1.0.1'
+license 'MIT'
 
 -- Client Scripts
 client_scripts {
@@ -65,4 +66,3 @@ export 'SafeCheckDynamicIDOnline'
 export 'SafeGetIdentifierFromStaticID'
 export 'SafeGetStaticIDFromIdentifier'
 export 'SafeGetConflictStats'
-
