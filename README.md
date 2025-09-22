@@ -403,7 +403,6 @@ MIT – see `LICENSE`.
 
 ## Credits
 Author: Simple
-Enhancements / Refactor: AI pair programming assistance
 
 German locale included (`locales/de.lua`).
 PRs, suggestions & issues welcome.
@@ -510,3 +509,4 @@ window.addEventListener('message', (e) => {
   }
 });
 ```
+
