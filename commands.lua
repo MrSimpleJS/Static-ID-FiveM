@@ -98,7 +98,7 @@ end, true)
 
 -- Optional: list all registered commands (server console)
 RegisterCommand('allcommands', function(source)
-    print('Alle Befehle:')
+    print('All registered commands:')
     for _, command in ipairs(GetRegisteredCommands()) do
         print(command.name)
     end
@@ -110,7 +110,7 @@ RegisterCommand('staticidsave', function(src)
         print(_U('persist_cmd_disabled'))
         return
     end
-    -- Export nutzen damit Logik zentral bleibt
+    -- Use export so that logic stays centralized in shared.lua
     local ok = pcall(function() exports['FiveM-Static-ID']:StaticID_SaveCache() end)
     if ok then
         print(_U('persist_cmd_save'))
@@ -255,5 +255,26 @@ RegisterCommand('staticidconflictsclear', function(source)
         print(('^2[StaticID] Conflict stats cleared: %s^0'):format(tostring(cleared)))
     else
         notify(source, '^2Conflict stats cleared')
+    end
+end, true)
+
+-- Admin reset command: wipes static_ids table & cache (separate table mode only)
+RegisterCommand('staticidreset', function(source)
+    local ok, res = pcall(function()
+        return exports[GetCurrentResourceName()]:StaticID_ResetStaticTable()
+    end)
+    if not ok or res == false then
+        local msg = res or 'Reset failed'
+        if source == 0 then
+            print(('^1[StaticID] Reset failed: %s^0'):format(tostring(msg)))
+        else
+            notify(source, '^1Reset fehlgeschlagen: ' .. tostring(msg))
+        end
+        return
+    end
+    if source == 0 then
+    print('^2[StaticID] StaticID table & cache reset.^0')
+    else
+    notify(source, '^2StaticID table & cache reset')
     end
 end, true)

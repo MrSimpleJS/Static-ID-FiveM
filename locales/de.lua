@@ -20,6 +20,7 @@ Locales['de'] = {
     param_error = 'Parameterfehler: %s',
     persist_saved = 'Persistenter Cache gespeichert (%s)',
     persist_loaded = 'Persistenter Cache geladen (%s)',
+    persist_loaded_verbose = 'Persistenter Cache geladen: Datei=%s | Einträge=%d | Dyn=%d | %s',
     persist_cleared = 'Persistenter Cache gelöscht (%s)',
     persist_cmd_save = 'Cache wurde gespeichert.',
     persist_cmd_clear = 'Persistente Datei gelöscht.',
@@ -53,4 +54,7 @@ Locales['de'] = {
     ,conflict_detected = 'Konflikt: Identifier %s unterschiedliche Static IDs (Cache=%s DB=%s)'
     ,conflict_cmd_header = 'Konflikt-Erkennung Zusammenfassung: gesamt=%d gespeichert=%d'
     ,conflict_none = 'Keine Konflikte aufgezeichnet.'
+    ,assigned_new = 'Neue StaticID vergeben: %s -> %d'
+    ,reset_done = 'StaticID Tabelle & Cache zurückgesetzt.'
+    ,reset_fail = 'StaticID Reset fehlgeschlagen: %s'
 }

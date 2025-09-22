@@ -51,7 +51,7 @@ Config.EnableCaching = true            -- disable only for debugging / fallback
 Config.InitialPlayerPreload = true     -- resolve static ID as soon as player loads
 Config.CacheRefreshInterval = 60       -- full identifier/static mapping refresh cadence
 Config.CachePruneInterval = 300        -- prune dynamic (online) mappings for disconnected players
-Config.Debug = true                   -- verbose internal logging
+Config.Debug = false                   -- verbose internal logging
 
 -- Locale: 'en' or 'de' (extendable via locales/*.lua)
 Config.Locale = 'en'
@@ -74,7 +74,7 @@ Config.MaxRefreshRows = 5000
 ]]
 Config.PersistentCache = {
     Enabled = true,
-    FileName = 'cache_staticid.json', -- relative to resource root
+    FileName = 'resources/FiveM-Static-ID/cache_staticid.json', -- relative to resource root
     SaveInterval = 120,               -- seconds between auto-saves
     IncludeDynamic = false,           -- persist dynamic (session) mappings too
     UseChecksum = true,
@@ -109,11 +109,15 @@ Config.DB = {
     IdentifierColumn = 'identifier',
     StaticIDColumn = 'id',
 
-    -- Separate static ID table mode
+    -- Separate static ID table mode (enabled to guarantee clean sequential assignment 1,2,3,...)
     UseSeparateStaticTable = false,
     SeparateTableName = 'static_ids',
     SeparateTablePK = 'static_id',
     SeparateTableIdentifier = 'identifier',
+    -- Automatically create the separate table if missing on startup
+    AutoCreateTable = false,
+    -- Print an additional green colored console line for each new static ID assignment (besides debugPrint)
+    ColorAssignLog = true,
 
     -- One-time migration (only when table is near-empty). Copies unique identifiers
     -- from UsersTable into SeparateTable. Disable after initial adoption.

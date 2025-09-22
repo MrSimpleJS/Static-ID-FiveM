@@ -15,6 +15,34 @@ High‑performance, cache-first API for translating between ephemeral (dynamic) 
 - ESX, QBCore, or fully standalone (identifier prefix priority)
 - Conflict detection loop (multi-server divergence guard)
 - Bulk resolution helper & rich admin/diagnostic commands
+- Client HUD exports: `ShowStaticID` + safe tuple `SafeShowStaticID` + reactive `RegisterStaticIDListener`
+
+## Quick Start
+1. Drop the folder into `resources/` (optionally rename to `staticid`).
+2. Ensure dependency order in `server.cfg`:
+  ```
+  ensure oxmysql
+  ensure es_extended  # or qb-core
+  ensure staticid
+  ```
+3. (Optional) Enable separate table mode for clean sequential IDs (recommended):
+  ```lua
+  -- config.lua
+  Config.DB.UseSeparateStaticTable = true
+  Config.DB.AutoCreateTable = true
+  ```
+4. In any server script:
+  ```lua
+  local sid = exports['FiveM-Static-ID']:GetClientStaticID(source)
+  ```
+5. In any client script (HUD):
+  ```lua
+  local ok, sid = exports['FiveM-Static-ID']:SafeShowStaticID()
+  if ok then print('Static ID', sid) end
+  ```
+6. See detailed docs below for advanced features (persistence, conflict scan, migration).
+
+For full change history see [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Files
 ```
@@ -54,6 +82,17 @@ ensure staticid
 | `GetCacheStats()` | Table with counts, dirty flags, lastSave/lastLoad timestamps |
 | `GetConflictStats()` | Conflict scan totals + recent conflict records |
 | `ClearConflictStats()` | Clears stored conflict records and resets counter |
+
+## Client Exports
+| Export | Description |
+|--------|-------------|
+| `ShowStaticID()` | Returns cached static ID (number) or nil if not yet resolved |
+| `SafeShowStaticID()` | Returns `(ok:boolean, staticId|nil)`; `ok=false` when not ready |
+| `RegisterStaticIDListener(cb)` | (Local function) Register callback fired immediately if ID known & on future updates |
+
+Listener notes:
+- Register as early as possible (resource start) for immediate push.
+- Safe polling fallback: call `SafeShowStaticID()` every second until `ok=true`.
 
 ### Safe Wrapper Exports
 Uniform return contract: `(ok, value, err)`
@@ -368,3 +407,106 @@ Enhancements / Refactor: AI pair programming assistance
 
 German locale included (`locales/de.lua`).
 PRs, suggestions & issues welcome.
+
+## Client HUD Integration (ShowStaticID / SafeShowStaticID)
+The resource now exposes lightweight client exports for HUD/UI scripts.
+
+### Quick Access
+```lua
+local sid = exports['FiveM-Static-ID']:ShowStaticID()
+if sid then
+  DrawTxt(('Static ID: %d'):format(sid), 0.50, 0.95)
+end
+```
+
+### Safe Tuple Variant
+```lua
+local ok, sid = exports['FiveM-Static-ID']:SafeShowStaticID()
+if ok then
+  print('My static ID =', sid)
+else
+  print('Static ID not yet assigned (still loading?)')
+end
+```
+
+### Change Listener (Reactive HUD Update)
+Inside a client script in the SAME resource (or adapt with an event wrapper):
+```lua
+RegisterStaticIDListener(function(id)
+  print('Static ID became available:', id)
+  -- e.g. update NUI frame, set a global, etc.
+end)
+```
+
+### Full Minimal HUD Example
+Create a client script (or extend an existing one):
+```lua
+local display = ''
+
+-- React as soon as the ID is known
+RegisterStaticIDListener(function(id)
+  display = ('Static ID: %d'):format(id)
+end)
+
+-- Fallback poll (in case listener registered after initial push)
+CreateThread(function()
+  local tries = 0
+  while display == '' and tries < 30 do
+    local ok, sid = exports['FiveM-Static-ID']:SafeShowStaticID()
+    if ok then
+      display = ('Static ID: %d'):format(sid)
+      break
+    end
+    tries = tries + 1
+    Wait(1000)
+  end
+end)
+
+-- Simple 2D text draw helper
+local function drawTxt(text, x, y)
+  SetTextFont(0)
+  SetTextProportional(1)
+  SetTextScale(0.3, 0.3)
+  SetTextColour(255, 255, 255, 180)
+  SetTextEntry('STRING')
+  SetTextCentre(true)
+  AddTextComponentString(text)
+  DrawText(x, y)
+end
+
+CreateThread(function()
+  while true do
+    Wait(0)
+    if display ~= '' then
+      drawTxt(display, 0.50, 0.95)
+    end
+  end
+end)
+```
+
+### Implementation Details
+- Server sends `staticid:client:set` with the player's static ID after first resolution.
+- Client requests it on startup via `staticid:server:requestStaticID` for restart resilience.
+- `ShowStaticID()` returns the cached number or `nil` if not assigned yet.
+- `SafeShowStaticID()` normalizes to `(ok:boolean, value|nil)` for consistency with other Safe exports.
+
+### Common Pitfalls
+- If you call the export too early (before server push), you'll get `nil` / `ok=false` — use a listener or poll with a short backoff.
+- Ensure this resource starts after your framework and oxmysql in `server.cfg`.
+- Do NOT cache the return of `exports[...]` function itself; call it each time or store the numeric result.
+
+### NUI Integration Sketch
+In a NUI-focused resource, forward the value to JS once:
+```lua
+RegisterStaticIDListener(function(id)
+  SendNUIMessage({ type = 'staticid', value = id })
+end)
+```
+Then in your JS:
+```js
+window.addEventListener('message', (e) => {
+  if (e.data.type === 'staticid') {
+  document.getElementById('static-id').textContent = e.data.value;
+  }
+});
+```

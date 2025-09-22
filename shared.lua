@@ -102,7 +102,16 @@ end
     params: table or nil
     returns: result table or nil
 ]]
+local _mysqlWarned
 local function runSql(query, params)
+    if not IsDuplicityVersion() then return nil end -- server-only; never run on client
+    if not MySQL then
+        if not _mysqlWarned then
+            _mysqlWarned = true
+            sqlError('MySQL object missing (oxmysql not started yet?) - DB features disabled until available')
+        end
+        return nil
+    end
     local ok, res = pcall(function()
         return MySQL.query.await(query, params)
     end)
@@ -116,6 +125,8 @@ end
 
 -- Simple scalar query helper (COUNT, etc.)
 local function runScalar(query, params)
+    if not IsDuplicityVersion() then return nil end
+    if not MySQL then return nil end
     local ok, res = pcall(function()
         return MySQL.scalar.await(query, params)
     end)
@@ -136,6 +147,26 @@ local function validateSchema()
     -- Basic presence checks; non-fatal but warn loudly.
     local okPrimary
     if usingSeparateTable() then
+        -- Auto-create table if missing
+        if MySQL and (Config.DB.AutoCreateTable ~= false) then
+            local create = ([[CREATE TABLE IF NOT EXISTS `%s` (
+  `%s` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `%s` VARCHAR(64) NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`%s`),
+  UNIQUE KEY `uniq_identifier` (`%s`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;]]):format(
+                Config.DB.SeparateTableName,
+                Config.DB.SeparateTablePK,
+                Config.DB.SeparateTableIdentifier,
+                Config.DB.SeparateTablePK,
+                Config.DB.SeparateTableIdentifier
+            )
+            local okCT = pcall(function() return MySQL.query.await(create) end)
+            if okCT then
+                debugPrint('Ensured separate static ID table exists')
+            end
+        end
         -- Check separate table columns
         local rows = runSql(('SHOW COLUMNS FROM %s'):format(Config.DB.SeparateTableName), {})
         if not rows then
@@ -209,7 +240,7 @@ end
 local function migrateUsersToSeparate()
     if not usingSeparateTable() then return end
     if not (Config.DB.MigrateUsersOnFirstRun) then return end
-    -- Prüfe ob Tabelle leer ist (oder extrem klein < 5 Einträge) umversehene Doppel-Migration vermeiden
+    -- Safety: check if separate table is empty (or very small <5 rows) to avoid unintended double migration
     local count = runScalar(('SELECT COUNT(*) FROM %s'):format(Config.DB.SeparateTableName), {}) or 0
     if count > 5 then
         debugPrint('Migration skipped (table not empty)')
@@ -253,6 +284,13 @@ local function insertStaticForIdentifier(identifier)
         if newId and Config.Framework == 'standalone' then
             TriggerEvent('staticid:assigned', identifier, newId)
         end
+        if newId then
+            local msg = _U('assigned_new', identifier, newId)
+            debugPrint(msg)
+            if Config.DB.ColorAssignLog then
+                print(('^2[StaticID] %s^0'):format(msg))
+            end
+        end
         return newId
     end
     return nil
@@ -264,11 +302,11 @@ local Cache = {
     identifierToStatic = {},
     -- static_id -> identifier
     staticToIdentifier = {},
-    -- static_id -> dynamic_id (nur wenn online)
+    -- static_id -> dynamic_id (only while player is online)
     staticToDynamic = {},
-    -- dynamic_id -> static_id (nur wenn online)
+    -- dynamic_id -> static_id (only while player is online)
     dynamicToStatic = {},
-    -- Dirty flags für Persistenz
+    -- Dirty flags for persistence
     _dirtyStatic = false,
     _dirtyDynamic = false
 }
@@ -287,15 +325,17 @@ local persistFile = (Config.PersistentCache and Config.PersistentCache.FileName)
 
 -- Simple JSON helpers
 local function fileExists(path)
-    local f = io.open(path, 'r')
-    if f then f:close() return true end
-    return false
+    if not IsDuplicityVersion() then return false end
+    local ok, f = pcall(io.open, path, 'r')
+    if not ok or not f then return false end
+    f:close(); return true
 end
 
 local function savePersistent()
+    if not IsDuplicityVersion() then return end -- server only
     if not (Config.PersistentCache and Config.PersistentCache.Enabled) then return end
     if Config.PersistentCache.SkipIfClean and not Cache._dirtyStatic and (not Config.PersistentCache.IncludeDynamic or not Cache._dirtyDynamic) then
-    return -- nothing changed
+    return -- nothing changed since last save
     end
     local data = {
         identifierToStatic = Cache.identifierToStatic,
@@ -318,7 +358,7 @@ local function savePersistent()
             end
             return s
         end
-    -- static portion
+    -- Static portion (only identifier<->static mapping)
         local staticPayload = {
             identifierToStatic = data.identifierToStatic,
             staticToIdentifier = data.staticToIdentifier
@@ -336,16 +376,62 @@ local function savePersistent()
                 data.__checksum_dynamic = calcSum(encD)
             end
         end
-        ok, encoded = pcall(json.encode, data)
+    ok, encoded = pcall(json.encode, data)
         if not ok then
             sqlError('Persist encode checksum fail')
             return
         end
     end
+    -- Robust: ensure directory exists (create if missing)
+    -- Extract directory component (only if path contains a /)
+    local persistDir = persistFile:match('^(.+)/[^/]+$')
+    if persistDir then
+        local test = io.open(persistDir .. "/.dirtest", "w")
+        if not test then
+            os.execute("mkdir -p " .. persistDir)
+        else
+            test:close()
+            os.remove(persistDir .. "/.dirtest")
+        end
+    end
     local f = io.open(persistFile, 'w+')
     if not f then
-        sqlError('Cannot open persist file for writing')
+        sqlError('Cannot open persist file for writing: ' .. tostring(persistFile) .. ' (check permissions and path)')
         return
+    end
+    -- Optional pretty print (simple heuristic) if configured: adds newlines & indentation
+    if Config.PersistentCache.PrettyPrint then
+        local function prettyPrint(jsonStr)
+            local out, indent, i = {}, 0, 1
+            local len = #jsonStr
+            local function add(line) out[#out+1] = line end
+            while i <= len do
+                local ch = jsonStr:sub(i,i)
+                if ch == '{' or ch == '[' then
+                    add(string.rep('  ', indent) .. ch)
+                    indent = indent + 1
+                elseif ch == '}' or ch == ']' then
+                    indent = indent - 1
+                    add(string.rep('  ', indent) .. ch)
+                elseif ch == ',' then
+                    out[#out] = out[#out] .. ch
+                elseif ch == ':' then
+                    out[#out] = out[#out] .. ch .. ' '
+                else
+                    if not out[#out] or out[#out]:match('[%[{]$') then
+                        add(string.rep('  ', indent) .. ch)
+                    else
+                        out[#out] = out[#out] .. ch
+                    end
+                end
+                i = i + 1
+            end
+            return table.concat(out, '\n') .. '\n'
+        end
+        local okPP, pp = pcall(prettyPrint, encoded)
+        if okPP and pp then
+            encoded = pp
+        end
     end
     f:write(encoded)
     f:close()
@@ -356,6 +442,7 @@ local function savePersistent()
 end
 
 local function loadPersistent()
+    if not IsDuplicityVersion() then return end
     if not (Config.PersistentCache and Config.PersistentCache.Enabled) then return end
     if not fileExists(persistFile) then return end
     local f = io.open(persistFile, 'r')
@@ -427,18 +514,32 @@ local function loadPersistent()
             end
         end
     end
-    debugPrint(_U('persist_loaded', persistFile))
+    -- Enhanced log: show counts & checksum status
+    local countStatic = 0
+    for _ in pairs(Cache.identifierToStatic) do countStatic = countStatic + 1 end
+    local dynCount = 0
+    if Config.PersistentCache.IncludeDynamic then
+        for _ in pairs(Cache.staticToDynamic) do dynCount = dynCount + 1 end
+    end
+    local checksumInfo
+    if Config.PersistentCache.UseChecksum then
+        checksumInfo = 'checksum=OK'
+    else
+        checksumInfo = 'checksum=OFF'
+    end
+    debugPrint(_U('persist_loaded_verbose', persistFile, countStatic, dynCount, checksumInfo))
     _persistMeta.lastLoad = os.time()
 end
 
 local function clearPersistent()
+    if not IsDuplicityVersion() then return end
     if fileExists(persistFile) then
         os.remove(persistFile)
         debugPrint(_U('persist_cleared', persistFile))
     end
 end
 
--- Cache Eintrag für online Spieler anlegen
+-- Populate cache entry for an online player
 local function extractIdentifierFromPlayer(p)
     if not p then return nil end
     if Config.Framework == 'esx' then
@@ -452,7 +553,7 @@ local function extractIdentifierFromPlayer(p)
             if val and val ~= '' then return val end
         end
         return pd.license or pd.citizenid
-    else -- standalone
+    else -- standalone identifier resolution strategy
         local src = p.source or p
         if not src then return nil end
         local order = Config.StandaloneIdentifierOrder or { 'license:' }
@@ -480,7 +581,7 @@ local function getPlayerById(src)
     elseif Config.Framework == 'qb' then
         return QBCore and QBCore.Functions.GetPlayer(src) or nil
     else
-        -- standalone: create a lightweight shim with .source for identifier extraction
+    -- Standalone: create a lightweight shim object with .source for identifier extraction
         if GetPlayerName(src) then
             return { source = src }
         end
@@ -514,7 +615,7 @@ local function getPlayerByIdentifier(identifier)
         end
         return nil
     else
-        -- standalone: brute force through connected players
+    -- Standalone: brute force scan through connected players for matching identifier
         for _, id in ipairs(GetPlayers()) do
             id = tonumber(id) or id
             if GetPlayerName(id) then
@@ -533,7 +634,7 @@ end
 local function cacheOnline(xPlayer)
     local identifier = extractIdentifierFromPlayer(xPlayer)
     if not identifier then return end
-    -- Static ID laden, falls nicht vorhanden
+    -- Load static id if not cached yet
     local static_id = Cache.identifierToStatic[identifier]
     if not static_id then
         local rows = selectStaticByIdentifier(identifier)
@@ -559,11 +660,13 @@ local function cacheOnline(xPlayer)
         if dyn then
             Cache.staticToDynamic[static_id] = dyn
             Cache.dynamicToStatic[dyn] = static_id
+            -- Push static ID to client (for HUD) when first resolved / cached
+            TriggerClientEvent('staticid:client:set', dyn, static_id)
         end
     end
 end
 
--- Spieler aus Online-Cache entfernen
+-- Remove a player (dynamic session id) from online cache mappings
 local function uncacheDynamic(dynamicId)
     local static_id = Cache.dynamicToStatic[dynamicId]
     if static_id then
@@ -572,7 +675,39 @@ local function uncacheDynamic(dynamicId)
     end
 end
 
--- Vollständigen Cache (identifier <-> static) neu laden
+-- Reset static_ids table and in-memory caches (export)
+function StaticID_ResetStaticTable()
+    if not usingSeparateTable() then
+        return false, 'Not using separate static table'
+    end
+    if not MySQL then
+        return false, 'MySQL not ready'
+    end
+    local ok, err = pcall(function()
+        MySQL.query.await(('TRUNCATE TABLE %s'):format(Config.DB.SeparateTableName))
+    end)
+    if not ok then
+        sqlError('Reset failed: ' .. tostring(err))
+        return false, err
+    end
+    Cache.identifierToStatic = {}
+    Cache.staticToIdentifier = {}
+    Cache.staticToDynamic = {}
+    Cache.dynamicToStatic = {}
+    Cache._dirtyStatic = true
+    Cache._dirtyDynamic = true
+    if Config.PersistentCache and Config.PersistentCache.Enabled then
+    -- Remove persisted file so numbering restarts clean
+        local persistFile = (Config.PersistentCache and Config.PersistentCache.FileName) or 'cache_staticid.json'
+        if persistFile and persistFile ~= '' then
+            pcall(function() os.remove(persistFile) end)
+        end
+    end
+    debugPrint('Static ID table & caches reset')
+    return true
+end
+
+-- Reload full identifier <-> static mapping cache from DB
 local function refreshFullCache()
     if not Config.EnableCaching then return end
     debugPrint(_U('cache_refresh_start'))
@@ -604,7 +739,7 @@ local function refreshFullCache()
     debugPrint(_U('cache_refresh_done', count))
 end
 
--- Prune offline Mappings (dynamic)
+-- Prune offline dynamic mappings (remove disconnected players)
 local function pruneDynamicMappings()
     local removed = 0
     for dynamicId, static_id in pairs(Cache.dynamicToStatic) do
@@ -618,17 +753,17 @@ local function pruneDynamicMappings()
     end
 end
 
--- Periodische Tasks
+-- Periodic worker thread (refresh, prune, save, conflict scan)
 CreateThread(function()
     if not Config.EnableCaching then return end
     -- Validate schema before doing anything heavy
     validateSchema()
-    -- Führe Migration (falls konfiguriert) sehr früh aus
+    -- Perform migration early (if enabled)
     migrateUsersToSeparate()
-    -- Lade persistente Daten bevor initialer Refresh
+    -- Load persisted cache snapshot before initial DB refresh
     loadPersistent()
     refreshFullCache()
-    -- Conflict detection thread
+    -- Conflict detection sub-thread
     if Config.ConflictDetection and Config.ConflictDetection.Enabled then
         local interval = (Config.ConflictDetection.Interval or 180)
         CreateThread(function()
@@ -664,7 +799,7 @@ CreateThread(function()
     end
 end)
 
--- Event Hooks
+-- Event hooks (framework specific player load events)
 if Config.Framework == 'esx' then
     AddEventHandler('esx:playerLoaded', function(playerId, xPlayer)
         if not Config.EnableCaching then return end
@@ -705,7 +840,7 @@ AddEventHandler('playerDropped', function()
     local src = source
     uncacheDynamic(src)
     if Config.Framework == 'qb' and QBCore then
-    -- Clean index
+    -- Clean reverse index (QB specific)
         for identifier, s in pairs(QB_Index) do
             if s == src then
                 QB_Index[identifier] = nil
@@ -910,7 +1045,7 @@ local function BulkResolveIDs(list)
                 end
             end
         elseif type(raw) == 'string' then
-            -- treat as identifier string
+            -- Treat as identifier string
             entry.type = 'identifier'
             local sid = GetStaticIDFromIdentifier(raw)
             if sid then
@@ -1072,7 +1207,7 @@ local function SafeCheckDynamicIDOnline(dynamic_id)
     return true, ok and true or false, nil
 end
 
--- Exports registrieren
+-- Register exports
 exports('GetClientStaticID', GetClientStaticID)
 exports('GetClientDynamicID', GetClientDynamicID)
 exports('CheckStaticIDValid', CheckStaticIDValid)
@@ -1104,3 +1239,14 @@ end)
 
 exports('StaticID_SaveCache', savePersistent)
 exports('StaticID_ClearPersist', clearPersistent)
+
+-- Server -> Client request handler: client asks for its static ID (e.g. on resource restart)
+if IsDuplicityVersion() then
+    RegisterNetEvent('staticid:server:requestStaticID', function()
+        local src = source
+        local sid = GetClientStaticID(src)
+        if sid then
+            TriggerClientEvent('staticid:client:set', src, sid)
+        end
+    end)
+end
