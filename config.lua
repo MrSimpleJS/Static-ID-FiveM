@@ -74,7 +74,7 @@ Config.MaxRefreshRows = 5000
 ]]
 Config.PersistentCache = {
     Enabled = true,
-    FileName = 'resources/FiveM-Static-ID/cache_staticid.json', -- relative to resource root
+    FileName = 'resources/Static-ID-FiveM/cache_staticid.json', -- relative to resource root
     SaveInterval = 120,               -- seconds between auto-saves
     IncludeDynamic = false,           -- persist dynamic (session) mappings too
     UseChecksum = true,
@@ -140,3 +140,4 @@ if Config.Framework == 'qb' and not Config.DB.UseSeparateStaticTable then
 end
 
 return Config
+
